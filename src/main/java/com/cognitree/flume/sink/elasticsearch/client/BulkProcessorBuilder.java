@@ -26,7 +26,7 @@ import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.core.TimeValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,9 +38,9 @@ import static com.cognitree.flume.sink.elasticsearch.Constants.*;
  * This class creates  an instance of the {@link BulkProcessor}
  * Set the configuration for the BulkProcessor through {@link Context} object
  */
-public class BulkProcessorBulider {
+public class BulkProcessorBuilder {
 
-    private static final Logger logger = LoggerFactory.getLogger(BulkProcessorBulider.class);
+    private static final Logger LOG = LoggerFactory.getLogger(BulkProcessorBuilder.class);
 
     private String bulkProcessorName;
 
@@ -58,30 +58,36 @@ public class BulkProcessorBulider {
 
     private ElasticSearchSink elasticSearchSink;
 
-    public BulkProcessor buildBulkProcessor(Context context, ElasticSearchSink elasticSearchSink) {
-        this.elasticSearchSink = elasticSearchSink;
-        bulkActions = context.getInteger(ES_BULK_ACTIONS,
-                DEFAULT_ES_BULK_ACTIONS);
-        bulkProcessorName = context.getString(ES_BULK_PROCESSOR_NAME,
-                DEFAULT_ES_BULK_PROCESSOR_NAME);
-        bulkSize = Util.getByteSizeValue(context.getInteger(ES_BULK_SIZE),
-                context.getString(ES_BULK_SIZE_UNIT));
-        concurrentRequest = context.getInteger(ES_CONCURRENT_REQUEST,
-                DEFAULT_ES_CONCURRENT_REQUEST);
-        flushIntervalTime = Util.getTimeValue(context.getString(ES_FLUSH_INTERVAL_TIME),
-                DEFAULT_ES_FLUSH_INTERVAL_TIME);
-        backoffPolicyTimeInterval = context.getString(ES_BACKOFF_POLICY_TIME_INTERVAL,
-                DEFAULT_ES_BACKOFF_POLICY_START_DELAY);
-        backoffPolicyRetries = context.getInteger(ES_BACKOFF_POLICY_RETRIES,
-                DEFAULT_ES_BACKOFF_POLICY_RETRIES);
-        return build(elasticSearchSink.getClient());
+    private BulkProcessorBuilder() {
+
     }
 
-    private BulkProcessor build(final RestHighLevelClient client) {
-        logger.trace("Bulk processor name: [{}]  bulkActions: [{}], bulkSize: [{}], flush interval time: [{}]," +
+    public static BulkProcessorBuilder builder(Context context) {
+        BulkProcessorBuilder builder = new BulkProcessorBuilder();
+        builder.bulkActions = context.getInteger(ES_BULK_ACTIONS,
+                DEFAULT_ES_BULK_ACTIONS);
+        builder.bulkProcessorName = context.getString(ES_BULK_PROCESSOR_NAME,
+                DEFAULT_ES_BULK_PROCESSOR_NAME);
+        builder.bulkSize = Util.getByteSizeValue(context.getInteger(ES_BULK_SIZE),
+                context.getString(ES_BULK_SIZE_UNIT));
+        builder.concurrentRequest = context.getInteger(ES_CONCURRENT_REQUEST,
+                DEFAULT_ES_CONCURRENT_REQUEST);
+        builder.flushIntervalTime = Util.getTimeValue(context.getString(ES_FLUSH_INTERVAL_TIME),
+                DEFAULT_ES_FLUSH_INTERVAL_TIME);
+        builder.backoffPolicyTimeInterval = context.getString(ES_BACKOFF_POLICY_TIME_INTERVAL,
+                DEFAULT_ES_BACKOFF_POLICY_START_DELAY);
+        builder.backoffPolicyRetries = context.getInteger(ES_BACKOFF_POLICY_RETRIES,
+                DEFAULT_ES_BACKOFF_POLICY_RETRIES);
+        return builder;
+    }
+
+    public BulkProcessor build(ElasticSearchSink elasticSearchSink) {
+        this.elasticSearchSink = elasticSearchSink;
+        RestHighLevelClient client = elasticSearchSink.getClient();
+        LOG.trace("Bulk processor name: [{}]  bulkActions: [{}], bulkSize: [{}], flush interval time: [{}]," +
                         " concurrent Request: [{}], backoffPolicyTimeInterval: [{}], backoffPolicyRetries: [{}] ",
-                new Object[]{bulkProcessorName, bulkActions, bulkSize, flushIntervalTime,
-                        concurrentRequest, backoffPolicyTimeInterval, backoffPolicyRetries});
+                bulkProcessorName, bulkActions, bulkSize, flushIntervalTime,
+                concurrentRequest, backoffPolicyTimeInterval, backoffPolicyRetries);
         BiConsumer<BulkRequest, ActionListener<BulkResponse>> bulkConsumer =
                 (request, bulkListener) -> client
                         .bulkAsync(request, RequestOptions.DEFAULT, bulkListener);
@@ -100,29 +106,26 @@ public class BulkProcessorBulider {
     private BulkProcessor.Listener getListener() {
         return new BulkProcessor.Listener() {
             @Override
-            public void beforeBulk(long executionId,
-                                   BulkRequest request) {
-                logger.trace("Bulk Execution [" + executionId + "]\n" +
+            public void beforeBulk(long executionId, BulkRequest request) {
+                LOG.trace("Bulk Execution [" + executionId + "]\n" +
                         "No of actions " + request.numberOfActions());
             }
-
             @Override
             public void afterBulk(long executionId,
                                   BulkRequest request,
                                   BulkResponse response) {
-                logger.trace("Bulk execution completed [" + executionId + "]\n" +
+                LOG.trace("Bulk execution completed [" + executionId + "]\n" +
                         "Took (ms): " + response.getTook().getMillis() + "\n" +
                         "Failures: " + response.hasFailures() + "\n" +
                         "Failures Message: " + response.buildFailureMessage() + "\n" +
                         "Count: " + response.getItems().length);
             }
-
             @Override
             public void afterBulk(long executionId,
                                   BulkRequest request,
                                   Throwable failure) {
                 elasticSearchSink.assertConnection();
-                logger.error("Unable to send request to elasticsearch.", failure);
+                LOG.error("Unable to send request to elasticsearch.", failure);
             }
         };
     }

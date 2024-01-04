@@ -36,7 +36,7 @@ Required properties are in bold.
 | es.backoff.policy.retries                  | 8              | Number of backoff policy retries                                                              |
 | es.index                                   | default        | Index name to be used to store the documents                                                  |
 | es.type                                    | default        | Type to be used to store the documents                                                        |
-| es.index.builder                           |com.cognitree.<br>flume.sink.<br>elasticsearch.<br>StaticIndexBuilder          | Implementation of com.cognitree.flume.sink.elasticsearch.IndexBuilder interface |
+| es.index.builder                           |com.cognitree.<br>flume.sink.<br>elasticsearch.<br>StaticIndexBuilder          | Implementation of com.cognitree.flume.sink.elasticsearch.Indexer interface |
 | es.serializer                              |com.cognitree.<br>flume.sink.<br>elasticsearch.<br>SimpleSerializer            | Implementation of com.cognitree.flume.sink.elasticsearch.Serializer interface |
 | es.serializer.csv.fields                   | -              | Comma separated csv field name with data type i.e. column1:type1,column2:type2, Supported data types are string, boolean, int and float |
 | es.serializer.csv.delimiter                | ,(comma)       | Delimiter for the data in flume event body|
@@ -59,7 +59,7 @@ Example of agent named agent
   agent.sinks.es_sink.es.cluster.name=es-cluster
   agent.sinks.es_sink.es.client.hosts=127.0.0.1:9300
   agent.sinks.es_sink.es.index=defaultindex
-  agent.sinks.es_sink.es.index.builder=com.cognitree.flume.sink.elasticsearch.HeaderBasedIndexBuilder
+  agent.sinks.es_sink.es.index.builder=com.cognitree.flume.sink.elasticsearch.HeaderIndexer
   agent.sinks.es_sink.es.serializer=com.cognitree.flume.sink.elasticsearch.SimpleSerializer
   agent.sinks.es_sink.es.serializer.csv.fields=id:int,name:string,isemployee:boolean,leaves:float
   agent.sinks.es_sink.es.serializer.csv.delimiter=,

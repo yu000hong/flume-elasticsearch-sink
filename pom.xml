@@ -20,28 +20,37 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.apache.flume.flume-ng-sinks</groupId>
-    <artifactId>flume-ng-elasticsearch6.2-sink</artifactId>
+    <artifactId>flume-ng-elasticsearch7.17-sink</artifactId>
     <name>Flume NG ElasticSearch Sink</name>
-    <version>2.0.0</version>
+    <version>1.0.0</version>
 
     <properties>
-        <elasticsearch-verison>6.5.4</elasticsearch-verison>
-        <flume-version>1.8.0</flume-version>
-        <log4j-version>2.11.0</log4j-version>
+        <elasticsearch-verison>7.17.7</elasticsearch-verison>
+        <flume-version>1.9.0</flume-version>
         <junit-version>4.10</junit-version>
         <avro-version>1.8.2</avro-version>
+        <slf4j-version>1.7.36</slf4j-version>
     </properties>
 
     <build>
         <plugins>
             <plugin>
                 <artifactId>maven-assembly-plugin</artifactId>
-                <version>2.5.3</version>
+                <version>3.6.0</version>
                 <configuration>
-                    <descriptors>
-                        <descriptor>src/main/assembly/assembly.xml</descriptor>
-                    </descriptors>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
                 </configuration>
+                <executions>
+                    <execution>
+                        <id>make-assembly</id> <!-- this is used for inheritance merges -->
+                        <phase>package</phase> <!-- 指定在打包节点执行jar包合并操作 -->
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -73,14 +82,15 @@
             <scope>provided</scope>
         </dependency>
         <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-api</artifactId>
-            <version>${log4j-version}</version>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j-version}</version>
         </dependency>
         <dependency>
-            <groupId>org.apache.logging.log4j</groupId>
-            <artifactId>log4j-core</artifactId>
-            <version>${log4j-version}</version>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.22</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>junit</groupId>

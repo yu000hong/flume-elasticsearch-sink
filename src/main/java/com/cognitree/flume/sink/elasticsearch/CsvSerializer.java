@@ -1,105 +1,90 @@
-/*
- * Copyright 2017 Cognitree Technologies
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing
- * permissions and limitations under the License.
- */
+
 package com.cognitree.flume.sink.elasticsearch;
 
 import com.google.common.base.Charsets;
-import com.google.common.base.Throwables;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
-import org.elasticsearch.common.xcontent.XContentBuilder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.elasticsearch.xcontent.XContentBuilder;
 
-import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
-import static com.cognitree.flume.sink.elasticsearch.Constants.*;
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static com.cognitree.flume.sink.elasticsearch.Constants.COLONS;
+import static com.cognitree.flume.sink.elasticsearch.Constants.COMMA;
+import static org.elasticsearch.xcontent.XContentFactory.jsonBuilder;
 
-/**
- * This Serializer assumes the event body to be in CSV format
- * with custom delimiter specified.
- */
-public class CsvSerializer implements Serializer {
+@Slf4j
+public class CsvSerializer extends AddHeaderSerializer {
 
-    private static final Logger logger = LoggerFactory.getLogger(CsvSerializer.class);
+    private static final String FIELDS = "csv.fields";
+    private static final String DELIMITER = "csv.delimiter";
+    private static final String DEFAULT_DELIMITER = "\t";
 
-    private final List<String> names = new ArrayList<String>();
-
-    private final List<String> types = new ArrayList<String>();
+    private final List<String> names = new ArrayList<>();
+    private final List<FieldType> types = new ArrayList<>();
 
     private String delimiter;
 
-    /**
-     * Converts the csv data to the json format
-     */
     @Override
     public XContentBuilder serialize(Event event) {
-        XContentBuilder xContentBuilder = null;
-        String body = new String(event.getBody(), Charsets.UTF_8);
         try {
-            if (!names.isEmpty() && !types.isEmpty()) {
-                xContentBuilder = jsonBuilder().startObject();
-                List<String> values = Arrays.asList(body.split(delimiter));
-                for (int i = 0; i < names.size(); i++) {
-                    Util.addField(xContentBuilder, names.get(i), values.get(i), types.get(i));
-                }
-                xContentBuilder.endObject();
-            } else {
-                logger.error("Fields for csv files are not configured, " +
-                        "please configured the property " + ES_CSV_FIELDS);
+            XContentBuilder builder = jsonBuilder().startObject();
+            //body
+            String body = new String(event.getBody(), Charsets.UTF_8);
+            String[] values = body.split(delimiter);
+            for (int i = 0; i < names.size(); i++) {
+                Util.addField(builder, names.get(i), values[i], types.get(i));
             }
-        } catch (IOException e) {
-            logger.error("Error in converting the body to the json format " + e.getMessage(), e);
+            //headers
+            addHeaders(event, builder);
+            builder.endObject();
+            return builder;
+        } catch (Exception e) {
+            return rawSerialize(event);
         }
-        return xContentBuilder;
     }
 
-    /**
-     * Returns name and value based on the index
-     */
-    private String getValue(String fieldType, Integer index) {
-        String value = "";
-        if (fieldType.length() > index) {
-            value = fieldType.split(COLONS)[index];
-        }
-        return value;
-    }
-
-    /**
-     * Configure the field and its type with the custom delimiter
-     */
     @Override
     public void configure(Context context) {
-        String fields = context.getString(ES_CSV_FIELDS);
+        super.configure(context);
+        String fields = context.getString(FIELDS);
         if (fields == null) {
-            Throwables.propagate(new Exception("Fields for csv files are not configured," +
-                    " please configured the property " + ES_CSV_FIELDS));
+            throw new RuntimeException("Fields for csv files are not configured," +
+                    " please configured the property " + FIELDS);
         }
         try {
-            delimiter = context.getString(ES_CSV_DELIMITER, DEFAULT_ES_CSV_DELIMITER);
+            delimiter = context.getString(DELIMITER, DEFAULT_DELIMITER);
             String[] fieldTypes = fields.split(COMMA);
             for (String fieldType : fieldTypes) {
-                names.add(getValue(fieldType, 0));
-                types.add(getValue(fieldType, 1));
+                String[] parts = fieldType.split(COLONS);
+                if (parts.length == 1) {
+                    names.add(fieldType);
+                    types.add(FieldType.STRING);
+                } else {
+                    names.add(parts[0]);
+                    types.add(FieldType.get(parts[1]));
+                }
             }
         } catch (Exception e) {
-            Throwables.propagate(e);
+            throw new RuntimeException(e);
         }
     }
+
+    private XContentBuilder rawSerialize(Event event) {
+        try {
+            XContentBuilder builder = jsonBuilder().startObject();
+            //body
+            String body = new String(event.getBody(), Charsets.UTF_8);
+            Util.addField(builder, "body", body, FieldType.STRING);
+            //headers
+            addHeaders(event, builder);
+            builder.endObject();
+            return builder;
+        } catch (Exception e) {
+            log.error("Error in serializing, event is: {}", Util.dump(event), e);
+            return null;
+        }
+    }
+
 }

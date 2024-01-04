@@ -15,11 +15,8 @@
  */
 package com.cognitree.flume.sink.elasticsearch;
 
-import com.cognitree.flume.sink.elasticsearch.client.BulkProcessorBulider;
+import com.cognitree.flume.sink.elasticsearch.client.BulkProcessorBuilder;
 import com.cognitree.flume.sink.elasticsearch.client.ElasticsearchClientBuilder;
-import com.google.common.base.Charsets;
-import com.google.common.base.Strings;
-import com.google.common.base.Throwables;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Channel;
@@ -27,13 +24,14 @@ import org.apache.flume.Context;
 import org.apache.flume.Event;
 import org.apache.flume.Transaction;
 import org.apache.flume.conf.Configurable;
+import org.apache.flume.instrumentation.SinkCounter;
 import org.apache.flume.sink.AbstractSink;
 import org.elasticsearch.action.bulk.BulkProcessor;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.transport.NoNodeAvailableException;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.xcontent.XContentBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +41,8 @@ import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.cognitree.flume.sink.elasticsearch.Constants.*;
+import static com.cognitree.flume.sink.elasticsearch.Indexer.DEFAULT_INDEXER;
+import static com.cognitree.flume.sink.elasticsearch.Serializer.DEFAULT_SERIALIZER;
 
 /**
  * This sink will read the events from a channel and add them to the bulk processor.
@@ -52,19 +52,20 @@ import static com.cognitree.flume.sink.elasticsearch.Constants.*;
  */
 public class ElasticSearchSink extends AbstractSink implements Configurable {
 
-    private static final Logger logger = LoggerFactory.getLogger(ElasticSearchSink.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ElasticSearchSink.class);
 
     private static final int CHECK_CONNECTION_PERIOD = 3000;
 
+    private final AtomicBoolean shouldBackOff = new AtomicBoolean(false);
+    private BulkProcessorBuilder bulkProcessorBuilder;
+    private ElasticsearchClientBuilder clientBuilder;
     private BulkProcessor bulkProcessor;
-
-    private IndexBuilder indexBuilder;
-
+    private Indexer indexer;
     private Serializer serializer;
-
     private RestHighLevelClient client;
+    private SinkCounter sinkCounter;
+    private int batchSize = 100;
 
-    private AtomicBoolean shouldBackOff = new AtomicBoolean(false);
 
     public RestHighLevelClient getClient() {
         return client;
@@ -74,14 +75,16 @@ public class ElasticSearchSink extends AbstractSink implements Configurable {
     public void configure(Context context) {
         String[] hosts = getHosts(context);
         if (ArrayUtils.isNotEmpty(hosts)) {
-            client = new ElasticsearchClientBuilder(
-                    context.getString(PREFIX + ES_CLUSTER_NAME, DEFAULT_ES_CLUSTER_NAME), hosts)
-                    .build();
-            buildIndexBuilder(context);
+            String clusterName = context.getString(ES_CLUSTER_NAME, DEFAULT_CLUSTER_NAME);
+            clientBuilder = new ElasticsearchClientBuilder(clusterName, hosts);
+            bulkProcessorBuilder = BulkProcessorBuilder.builder(context);
+            buildIndexer(context);
             buildSerializer(context);
-            bulkProcessor = new BulkProcessorBulider().buildBulkProcessor(context, this);
         } else {
-            logger.error("Could not create Rest client, No host exist");
+            LOG.error("Could not create Rest client, No host exist");
+        }
+        if (sinkCounter == null) {
+            sinkCounter = new SinkCounter(getName());
         }
     }
 
@@ -93,96 +96,122 @@ public class ElasticSearchSink extends AbstractSink implements Configurable {
         Channel channel = getChannel();
         Transaction txn = channel.getTransaction();
         txn.begin();
+        int total = 0;
         try {
-            Event event = channel.take();
-            if (event != null) {
-                String body = new String(event.getBody(), Charsets.UTF_8);
-                if (!Strings.isNullOrEmpty(body)) {
-                    logger.debug("start to sink event [{}].", body);
-                    String index = indexBuilder.getIndex(event);
-                    String type = indexBuilder.getType(event);
-                    String id = indexBuilder.getId(event);
-                    XContentBuilder xContentBuilder = serializer.serialize(event);
-                    if (xContentBuilder != null) {
-                        if (!(Strings.isNullOrEmpty(id))) {
-                            bulkProcessor.add(new IndexRequest(index, type, id)
-                                    .source(xContentBuilder));
-                        } else {
-                            bulkProcessor.add(new IndexRequest(index, type)
-                                    .source(xContentBuilder));
-                        }
-                    } else {
-                        logger.error("Could not serialize the event body [{}] for index [{}], type[{}] and id [{}] ",
-                                new Object[]{body, index, type, id});
-                    }
+            for (int i = 0; i < batchSize; i++) {
+                Event event = channel.take();
+                if (event != null) {
+                    total++;
+                    sink(event);
                 }
-                logger.debug("sink event [{}] successfully.", body);
+            }
+            if (total == 0) {
+                sinkCounter.incrementBatchEmptyCount();
+            } else if (total < batchSize) {
+                sinkCounter.incrementBatchUnderflowCount();
+            } else {
+                sinkCounter.incrementBatchCompleteCount();
             }
             txn.commit();
+            sinkCounter.addToEventDrainSuccessCount(total);
             return Status.READY;
         } catch (Throwable tx) {
+            sinkCounter.incrementEventWriteOrChannelFail(tx);
             try {
                 txn.rollback();
             } catch (Exception ex) {
-                logger.error("exception in rollback.", ex);
+                LOG.error("exception in rollback.", ex);
             }
-            logger.error("transaction rolled back.", tx);
+            LOG.error("transaction rolled back.", tx);
             return Status.BACKOFF;
         } finally {
             txn.close();
         }
     }
 
+    private void sink(Event event) {
+        String index = indexer.getIndex(event);
+        if (index == null) {
+            LOG.debug("Sink event ignored, event is: {}", Util.dump(event));
+            return;
+        }
+        String type = "_doc";
+        String id = indexer.getId(event);
+        XContentBuilder xContentBuilder = serializer.serialize(event);
+        if (xContentBuilder != null) {
+            if (id != null && !id.isEmpty()) {
+                bulkProcessor.add(new IndexRequest(index, type, id)
+                        .source(xContentBuilder));
+            } else {
+                bulkProcessor.add(new IndexRequest(index, type)
+                        .source(xContentBuilder));
+            }
+        }
+    }
+
+    @Override
+    public void start() {
+        sinkCounter.start();
+        try {
+            client = clientBuilder.build();
+            bulkProcessor = bulkProcessorBuilder.build(this);
+            sinkCounter.incrementConnectionCreatedCount();
+        } catch (Exception e) {
+            LOG.error("Error when starting: {}", e.getMessage(), e);
+            sinkCounter.incrementConnectionFailedCount();
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (IOException ignored) {
+                    //ignore
+                } finally {
+                    sinkCounter.incrementConnectionClosedCount();
+                }
+            }
+        }
+    }
+
     @Override
     public void stop() {
-        if (bulkProcessor != null) {
-            bulkProcessor.close();
-        }
-    }
-
-    /**
-     * builds Index builder
-     */
-    private void buildIndexBuilder(Context context) {
-        String indexBuilderClass = DEFAULT_ES_INDEX_BUILDER;
-        if (StringUtils.isNotBlank(context.getString(ES_INDEX_BUILDER))) {
-            indexBuilderClass = context.getString(ES_INDEX_BUILDER);
-        }
-        this.indexBuilder = instantiateClass(indexBuilderClass);
-        if (this.indexBuilder != null) {
-            this.indexBuilder.configure(context);
-        }
-    }
-
-    /**
-     * builds Serializer
-     */
-    private void buildSerializer(Context context) {
-        String serializerClass = DEFAULT_ES_SERIALIZER;
-        if (StringUtils.isNotEmpty(context.getString(ES_SERIALIZER))) {
-            serializerClass = context.getString(ES_SERIALIZER);
-        }
-        this.serializer = instantiateClass(serializerClass);
-        if (this.serializer != null) {
-            this.serializer.configure(context);
-        }
-    }
-
-    private <T> T instantiateClass(String className) {
         try {
-            @SuppressWarnings("unchecked")
-            Class<T> aClass = (Class<T>) Class.forName(className);
-            return aClass.newInstance();
-        } catch (Exception e) {
-            logger.error("Could not instantiate class " + className, e);
-            Throwables.propagate(e);
-            return null;
+            if (bulkProcessor != null) {
+                bulkProcessor.close();
+            }
+            if (client != null) {
+                client.close();
+            }
+        } catch (IOException e) {
+            sinkCounter.incrementConnectionFailedCount();
+        }
+        sinkCounter.incrementConnectionClosedCount();
+        sinkCounter.stop();
+        super.stop();
+    }
+
+    private void buildIndexer(Context context) {
+        String indexerClass = DEFAULT_INDEXER;
+        if (context.getString(Indexer.PREFIX) != null) {
+            indexerClass = context.getString(Indexer.PREFIX);
+        }
+        this.indexer = Indexer.getInstance(indexerClass);
+        if (this.indexer != null) {
+            Context indexerContext = new Context(context.getSubProperties(Indexer.PREFIX + "."));
+            this.indexer.configure(indexerContext);
         }
     }
 
-    /**
-     * returns hosts
-     */
+    private void buildSerializer(Context context) {
+        String serializerClass = DEFAULT_SERIALIZER;
+        if (context.getString(Serializer.PREFIX) != null) {
+            serializerClass = context.getString(Serializer.PREFIX);
+        }
+        this.serializer = Serializer.getInstance(serializerClass);
+        if (this.serializer != null) {
+            Context serializerContext = new Context(context.getSubProperties(Serializer.PREFIX + "."));
+            this.serializer.configure(serializerContext);
+        }
+    }
+
     private String[] getHosts(Context context) {
         String[] hosts = null;
         if (StringUtils.isNotBlank(context.getString(ES_HOSTS))) {
@@ -209,7 +238,7 @@ public class ElasticSearchSink extends AbstractSink implements Configurable {
                         timer.purge();
                     }
                 } catch (IOException e) {
-                    logger.error("ping request for elasticsearch failed " + e.getMessage(), e);
+                    LOG.error("ping request for elasticsearch failed " + e.getMessage(), e);
                 }
             }
         };
@@ -219,4 +248,5 @@ public class ElasticSearchSink extends AbstractSink implements Configurable {
     private boolean checkConnection() throws IOException {
         return client.ping(RequestOptions.DEFAULT);
     }
+
 }

@@ -23,20 +23,36 @@ import org.apache.flume.conf.Configurable;
  * A single instance of the class is created when the Sink initializes and is destroyed when the Sink is stopped.
  * Config params can be taken through Configurable
  */
-public interface IndexBuilder extends Configurable {
+public interface Indexer extends Configurable {
+
+    String PREFIX = "es.indexer";
+    String DEFAULT_INDEXER = "static";
 
     /**
-     * Returns name
+     * Returns index.
+     * The event will be ignored if the returned index is null.
      */
     String getIndex(Event event);
-
-    /**
-     * Returns Type
-     */
-    String getType(Event event);
 
     /**
      * Returns Id
      */
     String getId(Event event);
+
+
+    static Indexer getInstance(String type){
+        switch (type){
+            case "static":
+                return new StaticIndexer();
+            case "header":
+                return new HeaderIndexer();
+            case "template":
+                return new TemplateIndexer();
+            case "expression":
+                return new ExpressionIndexer();
+            default:
+                return Util.instantiateClass(type);
+        }
+    }
+
 }

@@ -35,7 +35,7 @@ import static com.cognitree.flume.sink.elasticsearch.Constants.DEFAULT_ES_PORT;
  */
 public class ElasticsearchClientBuilder {
 
-    private static final Logger logger = LoggerFactory.getLogger(ElasticsearchClientBuilder.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ElasticsearchClientBuilder.class);
 
     private String clusterName;
 
@@ -50,8 +50,8 @@ public class ElasticsearchClientBuilder {
         RestHighLevelClient client;
         HttpHost[] hosts = new HttpHost[transportAddresses.size()];
         int i = 0;
-        logger.trace("Cluster Name: [{}], HostName: [{}] ",
-                new Object[]{clusterName, transportAddresses});
+        LOG.trace("Cluster Name: [{}], HostName: [{}] ",
+                clusterName, transportAddresses);
         for (TransportAddress transportAddress : transportAddresses) {
             hosts[i++] = new HttpHost(transportAddress.address().getAddress(),
                     transportAddress.address().getPort(), "http");
@@ -66,12 +66,13 @@ public class ElasticsearchClientBuilder {
             for (String transportAddress : transportAddresses) {
                 String[] hostDetails = transportAddress.split(":");
                 String hostName = hostDetails[0];
-                Integer port = hostDetails.length > 1 ?
+                int port = hostDetails.length > 1 ?
                         Integer.parseInt(hostDetails[1]) : DEFAULT_ES_PORT;
                 this.transportAddresses.add(new TransportAddress(InetAddress.getByName(hostName), port));
             }
         } catch (UnknownHostException e) {
-            logger.error("Error in creating the TransportAddress for elasticsearch " + e.getMessage(), e);
+            LOG.error("Error in creating the TransportAddress for elasticsearch " + e.getMessage(), e);
         }
     }
+
 }

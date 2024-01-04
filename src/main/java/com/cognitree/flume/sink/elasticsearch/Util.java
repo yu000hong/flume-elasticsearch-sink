@@ -15,16 +15,22 @@
  */
 package com.cognitree.flume.sink.elasticsearch;
 
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.flume.Context;
+import org.apache.flume.Event;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
-import org.elasticsearch.common.unit.TimeValue;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.xcontent.XContentBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.util.Map;
+import java.util.StringJoiner;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static com.cognitree.flume.sink.elasticsearch.Constants.*;
 
@@ -98,25 +104,84 @@ public class Util {
     /**
      * Add csv field to the XContentBuilder
      */
-    public static void addField(XContentBuilder xContentBuilder, String key, String value, String type) throws IOException {
-        if (type != null) {
-            FieldTypeEnum fieldTypeEnum = FieldTypeEnum.valueOf(type.toUpperCase());
-            switch (fieldTypeEnum) {
-                case STRING:
-                    xContentBuilder.field(key, value);
-                    break;
-                case FLOAT:
-                    xContentBuilder.field(key, Float.valueOf(value));
-                    break;
-                case INT:
-                    xContentBuilder.field(key, Integer.parseInt(value));
-                    break;
-                case BOOLEAN:
-                    xContentBuilder.field(key, Boolean.valueOf(value));
-                    break;
-                default:
-                    logger.error("Type is incorrect, please check type: " + type);
-            }
+    public static void addField(XContentBuilder xContentBuilder, String key, String value, FieldType type) throws IOException {
+        if (type == null) {
+            type = FieldType.STRING;
+        }
+        switch (type) {
+            case STRING:
+                xContentBuilder.field(key, value);
+                break;
+            case INT:
+                xContentBuilder.field(key, Integer.valueOf(value));
+                break;
+            case LONG:
+                xContentBuilder.field(key, Long.valueOf(value));
+                break;
+            case FLOAT:
+                xContentBuilder.field(key, Float.valueOf(value));
+            case DOUBLE:
+                xContentBuilder.field(key, Double.valueOf(value));
+                break;
+            case BOOLEAN:
+                xContentBuilder.field(key, Boolean.valueOf(value));
+                break;
+            case DATE:
+                xContentBuilder.timeField(key, value);
+                break;
+            case TIMESTAMP:
+                xContentBuilder.timeField(key, Long.valueOf(value));
+                break;
+            default:
+                logger.error("Type is incorrect, please check type: " + type);
         }
     }
+
+    public static <T> T instantiateClass(String className) {
+        try {
+            @SuppressWarnings("unchecked")
+            Class<T> aClass = (Class<T>) Class.forName(className);
+            return aClass.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            logger.error("Could not instantiate class " + className, e);
+            return null;
+        }
+    }
+
+    private static final Pattern pattern = Pattern.compile("\\$\\{(.*?)\\}");
+
+    public static String template(String text, Map<String, Object> params) {
+        if (StringUtils.isBlank(text) || MapUtils.isEmpty(params)) {
+            return text;
+        }
+        String targetString = text;
+        Matcher matcher = pattern.matcher(text);
+        while (matcher.find()) {
+            try {
+                String group = matcher.group();
+                String variable = group.substring(2, group.length() - 1).trim();
+                Object value = params.get(variable);
+                if (value != null) {
+                    targetString = targetString.replace(group, value.toString());
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("String formatter failed", e);
+            }
+        }
+        return targetString;
+    }
+
+    public static String dump(Event event) {
+        if (event == null) {
+            return "null";
+        }
+        StringJoiner joiner = new StringJoiner(",");
+        event.getHeaders().keySet().forEach(k -> {
+            String v = event.getHeaders().get(k);
+            joiner.add(k + "=" + v);
+        });
+        return "{header: (" + joiner.toString()
+                + "), body: " + new String(event.getBody()) + "}";
+    }
+
 }

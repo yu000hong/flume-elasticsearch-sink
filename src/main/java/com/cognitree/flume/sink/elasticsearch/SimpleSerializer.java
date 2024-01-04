@@ -18,13 +18,13 @@ package com.cognitree.flume.sink.elasticsearch;
 import com.google.common.base.Charsets;
 import org.apache.flume.Context;
 import org.apache.flume.Event;
-import org.elasticsearch.common.xcontent.*;
+import org.elasticsearch.xcontent.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 
-import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
+import static org.elasticsearch.xcontent.XContentFactory.jsonBuilder;
 
 /**
  * This Serializer assumes the event body to be in JSON format
@@ -35,6 +35,7 @@ public class SimpleSerializer implements Serializer {
 
     private static final Logger logger = LoggerFactory.getLogger(SimpleSerializer.class);
 
+    @Override
     public XContentBuilder serialize(Event event) {
         XContentBuilder builder = null;
         try {
@@ -55,4 +56,5 @@ public class SimpleSerializer implements Serializer {
     public void configure(Context context) {
         // No parameters needed from the configurations
     }
+
 }

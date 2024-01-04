@@ -17,7 +17,7 @@ package com.cognitree.flume.sink.elasticsearch;
 
 import org.apache.flume.Event;
 import org.apache.flume.conf.Configurable;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.xcontent.XContentBuilder;
 
 /**
  * A serializer to convert the given Flume Event into a json document that will be indexed into Elasticsearch.
@@ -25,9 +25,26 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
  */
 public interface Serializer extends Configurable {
 
+    String PREFIX = "es.serializer";
+    String DEFAULT_SERIALIZER = "simple";
+
     /**
      * Serialize the body of the event to
      * XContentBuilder format
      */
     XContentBuilder serialize(Event event);
+
+    static Serializer getInstance(String type){
+        switch (type){
+            case "simple":
+                return new SimpleSerializer();
+            case "csv":
+                return new CsvSerializer();
+            case "avro":
+                return new AvroSerializer();
+            default:
+                return Util.instantiateClass(type);
+        }
+    }
+
 }
